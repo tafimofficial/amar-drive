@@ -22,6 +22,15 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 
+data class FileProgress(
+    val fileId: Int,
+    val path: String?,
+    val isCompleted: Boolean,
+    val downloadedPrefixSize: Long,
+    val downloadedSize: Long,
+    val expectedSize: Long
+)
+
 class TdClientManager private constructor(private val context: Context) : Client.ResultHandler {
 
     companion object {
@@ -52,11 +61,13 @@ class TdClientManager private constructor(private val context: Context) : Client
 
     private val localFilePaths = ConcurrentHashMap<Int, String>()
     private val completedFileIds = ConcurrentHashMap.newKeySet<Int>()
+    private val fileProgressMap = ConcurrentHashMap<Int, FileProgress>()
     private val _fileEvents = MutableSharedFlow<Int>(extraBufferCapacity = 128)
     val fileEvents: SharedFlow<Int> = _fileEvents.asSharedFlow()
 
     fun getFileLocalPath(fileId: Int): String? = localFilePaths[fileId]
     fun isFileCompleted(fileId: Int): Boolean = completedFileIds.contains(fileId)
+    fun getFileProgress(fileId: Int): FileProgress? = fileProgressMap[fileId]
 
     private var myUserId: Long = 0L
     private var pendingPhone: String = ""
@@ -96,18 +107,28 @@ class TdClientManager private constructor(private val context: Context) : Client
             TdApi.UpdateFile.CONSTRUCTOR -> {
                 val update = obj as TdApi.UpdateFile
                 val file = update.file
-                if (file.local != null) {
-                    if (!file.local.path.isNullOrEmpty()) {
-                        localFilePaths[file.id] = file.local.path
+                val local = file.local
+                if (local != null) {
+                    val p = if (!local.path.isNullOrEmpty()) local.path else null
+                    if (p != null) {
+                        localFilePaths[file.id] = p
                     }
-                    if (file.local.isDownloadingCompleted) {
+                    if (local.isDownloadingCompleted) {
                         completedFileIds.add(file.id)
-                        if (!file.local.path.isNullOrEmpty()) {
+                        if (p != null) {
                             scope.launch(Dispatchers.IO) {
-                                db.updateLocalPath(file.id, file.local.path)
+                                db.updateLocalPath(file.id, p)
                             }
                         }
                     }
+                    fileProgressMap[file.id] = FileProgress(
+                        fileId = file.id,
+                        path = p,
+                        isCompleted = local.isDownloadingCompleted,
+                        downloadedPrefixSize = local.downloadedPrefixSize,
+                        downloadedSize = local.downloadedSize,
+                        expectedSize = file.expectedSize
+                    )
                     _fileEvents.tryEmit(file.id)
                 }
             }
@@ -723,18 +744,42 @@ class TdClientManager private constructor(private val context: Context) : Client
     }
 
     fun downloadFile(fileId: Int, priority: Int = 1) {
+        downloadFileOffset(fileId, offset = 0L, limit = 0L, priority = priority)
+    }
+
+    fun downloadFileOffset(fileId: Int, offset: Long = 0L, limit: Long = 0L, priority: Int = 32) {
         val func = TdApi.DownloadFile().apply {
             this.fileId = fileId
             this.priority = priority
-            this.offset = 0L
-            this.limit = 0L
+            this.offset = offset
+            this.limit = limit
             this.synchronous = false
         }
         send(func) {}
     }
 
+    fun readFilePartSync(fileId: Int, offset: Long, count: Long, timeoutMs: Long = 500): ByteArray? {
+        val latch = java.util.concurrent.CountDownLatch(1)
+        var resultData: ByteArray? = null
+        val req = TdApi.ReadFilePart().apply {
+            this.fileId = fileId
+            this.offset = offset
+            this.count = count
+        }
+        send(req) { res ->
+            if (res is TdApi.Data) {
+                resultData = res.data
+            }
+            latch.countDown()
+        }
+        try {
+            latch.await(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+        } catch (_: InterruptedException) {}
+        return resultData
+    }
+
     fun startStreamingFile(fileId: Int) {
-        downloadFile(fileId, priority = 32)
+        downloadFileOffset(fileId, offset = 0L, limit = 0L, priority = 32)
     }
 
     fun send(function: TdApi.Function<*>, handler: (TdApi.Object) -> Unit) {

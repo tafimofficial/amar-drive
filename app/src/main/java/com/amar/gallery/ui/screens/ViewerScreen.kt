@@ -39,10 +39,12 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.FileProvider
 import androidx.media3.common.MediaItem as ExoMediaItem
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
@@ -406,47 +408,50 @@ fun VideoPlayerContent(
     isCurrentPage: Boolean,
     context: Context
 ) {
-    var localPath by remember(item.fileId) {
-        mutableStateOf(tdManager.getFileLocalPath(item.fileId) ?: item.localPath)
-    }
-
-    // Start streaming video immediately
-    LaunchedEffect(item.fileId) {
-        tdManager.startStreamingFile(item.fileId)
-    }
-
-    // Listen for file updates
-    LaunchedEffect(item.fileId) {
-        tdManager.fileEvents.collect { fileId ->
-            if (fileId == item.fileId) {
-                val updated = tdManager.getFileLocalPath(fileId)
-                if (!updated.isNullOrEmpty()) {
-                    localPath = updated
-                }
-            }
-        }
-    }
-
-    val player = remember(item.fileId) {
-        val dataSourceFactory = DataSource.Factory {
-            GrowingFileDataSource(
-                getFilePath = { tdManager.getFileLocalPath(item.fileId) ?: localPath },
-                isDownloadComplete = { tdManager.isFileCompleted(item.fileId) },
-                totalSize = item.sizeBytes
-            )
-        }
-        val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
-        ExoPlayer.Builder(context)
-            .setMediaSourceFactory(mediaSourceFactory)
-            .build()
-    }
-
-    var isPlaying by remember { mutableStateOf(true) }
+    var isPlaying by remember { mutableStateOf(false) }
     var currentPos by remember { mutableStateOf(0L) }
     var duration by remember { mutableStateOf(item.durationSec * 1000L) }
     var isSeeking by remember { mutableStateOf(false) }
     var seekFraction by remember { mutableStateOf(0f) }
     var showControls by remember { mutableStateOf(true) }
+    var isBuffering by remember { mutableStateOf(true) }
+    var isFirstFrameRendered by remember { mutableStateOf(false) }
+
+    val minithumbBitmap = remember(item.minithumb) {
+        NativeEngine.decodeMinithumb(item.minithumb)
+    }
+
+    // Initialize ExoPlayer with true progressive streaming immediately
+    val player = remember(item.fileId) {
+        val dataSourceFactory = GrowingFileDataSource.Factory(
+            tdManager = tdManager,
+            fileId = item.fileId,
+            totalSize = item.sizeBytes
+        )
+        val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory)
+            .createMediaSource(ExoMediaItem.fromUri(Uri.parse("amar-stream://video/${item.fileId}")))
+
+        ExoPlayer.Builder(context).build().apply {
+            setMediaSource(mediaSource)
+            prepare()
+            playWhenReady = isCurrentPage
+            addListener(object : Player.Listener {
+                override fun onPlaybackStateChanged(state: Int) {
+                    isBuffering = (state == Player.STATE_BUFFERING)
+                    if (state == Player.STATE_READY) {
+                        isBuffering = false
+                    }
+                }
+                override fun onIsPlayingChanged(playing: Boolean) {
+                    isPlaying = playing
+                }
+                override fun onRenderedFirstFrame() {
+                    isFirstFrameRendered = true
+                    isBuffering = false
+                }
+            })
+        }
+    }
 
     // Update playback progress periodically
     LaunchedEffect(player, isCurrentPage) {
@@ -462,7 +467,7 @@ fun VideoPlayerContent(
         }
     }
 
-    // Pause player when swiped away
+    // Pause player when swiped away, resume when returned
     LaunchedEffect(isCurrentPage) {
         if (isCurrentPage) {
             player.playWhenReady = true
@@ -479,27 +484,13 @@ fun VideoPlayerContent(
         }
     }
 
-    // Initialize media item as soon as path is available
-    LaunchedEffect(localPath) {
-        val p = localPath
-        if (!p.isNullOrEmpty() && (File(p).exists() || tdManager.getFileLocalPath(item.fileId) != null)) {
-            val uri = Uri.fromFile(File(p))
-            player.setMediaItem(ExoMediaItem.fromUri(uri))
-            player.prepare()
-            if (isCurrentPage) {
-                player.playWhenReady = true
-                isPlaying = true
-            }
-        }
-    }
-
     Box(
         modifier = Modifier
             .fillMaxSize()
             .clickable { showControls = !showControls },
         contentAlignment = Alignment.Center
     ) {
-        // PlayerView with useController = false to allow swiping between items!
+        // Player Surface View
         AndroidView(
             factory = { ctx ->
                 PlayerView(ctx).apply {
@@ -510,8 +501,47 @@ fun VideoPlayerContent(
             modifier = Modifier.fillMaxSize()
         )
 
+        // Show Thumbnail placeholder until video's first frame is rendered
+        if (!isFirstFrameRendered) {
+            if (minithumbBitmap != null) {
+                Image(
+                    bitmap = minithumbBitmap.asImageBitmap(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else if (!item.thumbPath.isNullOrEmpty() && File(item.thumbPath).exists()) {
+                AsyncImage(
+                    model = File(item.thumbPath),
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        }
+
+        // Streaming / Buffering Spinner
+        if (isBuffering || !isFirstFrameRendered) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color.Black.copy(alpha = 0.65f))
+                    .padding(horizontal = 20.dp, vertical = 14.dp)
+            ) {
+                CircularProgressIndicator(color = Color(0xFFF0AE45), modifier = Modifier.size(32.dp))
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = "Streaming video...",
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+
         // Center Play / Pause button overlay
-        if (showControls || !isPlaying) {
+        if (showControls && !isBuffering) {
             IconButton(
                 onClick = {
                     if (player.isPlaying) {
@@ -532,26 +562,6 @@ fun VideoPlayerContent(
                     contentDescription = if (isPlaying) "Pause" else "Play",
                     tint = Color.White,
                     modifier = Modifier.size(36.dp)
-                )
-            }
-        }
-
-        // Streaming buffer indicator
-        if (localPath.isNullOrEmpty() || !File(localPath!!).exists() || File(localPath!!).length() < 1024) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(Color.Black.copy(alpha = 0.65f))
-                    .padding(horizontal = 20.dp, vertical = 14.dp)
-            ) {
-                CircularProgressIndicator(color = Color(0xFFF0AE45), modifier = Modifier.size(32.dp))
-                Spacer(modifier = Modifier.height(10.dp))
-                Text(
-                    text = "Streaming video...",
-                    color = Color.White,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium
                 )
             }
         }
@@ -595,7 +605,8 @@ fun VideoPlayerContent(
                     },
                     onValueChangeFinished = {
                         if (duration > 0) {
-                            player.seekTo((seekFraction * duration).toLong())
+                            val targetMs = (seekFraction * duration).toLong()
+                            player.seekTo(targetMs)
                         }
                         isSeeking = false
                     },
