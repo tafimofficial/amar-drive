@@ -1,0 +1,48 @@
+<resources>
+    <string name="app_name">Amar</string>
+    <string name="tagline">Your channel, as a gallery</string>
+    <string name="login_desc">Sign in with your Telegram account to browse the photos and videos of channels you manage.</string>
+    <string name="login_note">Read-only access. Your session is encrypted and stays on this device.</string>
+    <string name="phone_number_hint">Phone number</string>
+    <string name="send_code">Send code</string>
+    <string name="verify_code">Verify Code</string>
+    <string name="enter_code_msg">Enter the 5-digit verification code sent to your Telegram app.</string>
+    <string name="enter_password_msg">Enter your 2FA Two-Step Verification Cloud Password.</string>
+    <string name="password_hint">2FA Cloud Password</string>
+    <string name="login_success">Logged in successfully</string>
+
+    <string name="nav_photos">Photos</string>
+    <string name="nav_channels">Channels</string>
+    <string name="nav_files">Files</string>
+    <string name="nav_settings">Settings</string>
+
+    <string name="filter_all">All</string>
+    <string name="filter_photos">Photos</string>
+    <string name="filter_videos">Videos</string>
+    <string name="filter_files">Files</string>
+    <string name="filter_audio">Audio</string>
+    <string name="filter_gifs">GIFs</string>
+
+    <string name="add_channel">Add channel</string>
+    <string name="no_channels">No channels found</string>
+    <string name="no_channels_sub">You must be an admin of a channel to see it here.</string>
+    <string name="admin_badge">Admin</string>
+    <string name="synced">Synced</string>
+    <string name="syncing">Syncing</string>
+
+    <string name="storage">Storage &amp; Cache</string>
+    <string name="theme">Theme</string>
+    <string name="theme_system">System</string>
+    <string name="theme_dark">Dark</string>
+    <string name="theme_light">Light</string>
+    <string name="app_lock">App Lock</string>
+    <string name="app_lock_desc">Require biometric/PIN to open</string>
+    <string name="wifi_only">Wi-Fi Only</string>
+    <string name="wifi_only_desc">Download full media only on Wi-Fi</string>
+    <string name="logout">Log Out</string>
+    <string name="logout_confirm">Are you sure you want to log out? Local caches will be cleaned.</string>
+    <string name="cancel">Cancel</string>
+    <string name="confirm">Confirm</string>
+    <string name="retry">Retry</string>
+</resources>
+

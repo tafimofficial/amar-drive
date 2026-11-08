@@ -1,0 +1,9 @@
+<resources>
+    <style name="Theme.Amar" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#10161E</item>
+        <item name="android:navigationBarColor">#10161E</item>
+        <item name="android:windowBackground">#10161E</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>
+

@@ -1,0 +1,33 @@
+<!doctype html><meta charset=utf-8><style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{width:360px;height:780px;font-family:Inter,sans-serif;overflow:hidden;background:var(--bg);color:var(--fg)}
+.dark{--bg:#10161E;--surf:#18212C;--surf2:#202B38;--fg:#EAF0F6;--mut:#8A9BAE;--acc:#F0AE45;--onacc:#1B1303;--line:#263344}
+.light{--bg:#F5F6F2;--surf:#FFFFFF;--surf2:#E9ECE6;--fg:#141A21;--mut:#5F6B77;--acc:#B8710F;--onacc:#FFFFFF;--line:#DDE1D8}
+.dark,.light{position:absolute;inset:0;background:var(--bg);color:var(--fg)}
+.sb{height:28px;display:flex;justify-content:space-between;align-items:center;padding:0 18px;font-size:12px;font-weight:600}
+.bar{height:56px;display:flex;align-items:center;padding:0 16px;gap:12px}
+.bar h1{font-size:19px;font-weight:650;letter-spacing:-.2px;flex:1}
+.ic{width:22px;height:22px;border:2px solid var(--fg);border-radius:6px;opacity:.85}
+.chips{display:flex;gap:8px;padding:4px 16px 10px}
+.chip{padding:7px 14px;border-radius:99px;background:var(--surf2);font-size:13px;font-weight:550;color:var(--mut)}
+.chip.on{background:var(--acc);color:var(--onacc)}
+.dh{padding:14px 16px 6px;font-size:14px;font-weight:650}
+.dh span{color:var(--mut);font-weight:500;margin-left:6px;font-size:12px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:2px;padding:0 0}
+.t{aspect-ratio:1;position:relative}
+.dur{position:absolute;right:5px;bottom:5px;background:rgba(0,0,0,.62);color:#fff;font-size:10.5px;font-weight:600;padding:2px 6px;border-radius:99px}
+.play{position:absolute;left:6px;top:6px;width:0;height:0;border-left:9px solid #fff;border-top:6px solid transparent;border-bottom:6px solid transparent;opacity:.95;filter:drop-shadow(0 0 2px rgba(0,0,0,.5))}
+.scrub{position:absolute;right:4px;top:210px;width:6px;height:420px;background:transparent}
+.bubble{position:absolute;right:14px;top:330px;background:var(--acc);color:var(--onacc);font-size:12px;font-weight:700;padding:6px 12px;border-radius:99px}
+.thumb{position:absolute;right:4px;top:318px;width:4px;height:44px;border-radius:4px;background:var(--acc)}
+.nav{position:absolute;bottom:0;left:0;right:0;height:64px;background:var(--surf);border-top:1px solid var(--line);display:flex;justify-content:space-around;align-items:center;font-size:11px;color:var(--mut);font-weight:550}
+.nav b{color:var(--acc)}
+.card{background:var(--surf);border:1px solid var(--line);border-radius:14px;padding:14px;margin:0 16px 10px}
+.btn{background:var(--acc);color:var(--onacc);font-weight:650;border-radius:12px;height:48px;display:flex;align-items:center;justify-content:center;font-size:15px}
+.mut{color:var(--mut)}
+.row{display:flex;align-items:center;gap:12px}
+.av{width:46px;height:46px;border-radius:50%}
+.badge{font-size:10.5px;font-weight:650;padding:2px 8px;border-radius:99px;border:1px solid var(--acc);color:var(--acc)}
+</style><body style="position:relative"><div class="dark" style="background:#000"><div class="sb"><span>9:41</span><span>● ▮▮▮</span></div><div class="bar" style="background:transparent"><div class="ic"></div><h1 style="font-size:15px;font-weight:600">3 Oct 2026, 6:42 PM</h1><div class="ic"></div></div>
+<div style="position:absolute;top:84px;left:0;right:0;bottom:120px"><div style="height:100%;background:radial-gradient(circle at 70% 30%,#F7D58E 0 9%,transparent 14%),linear-gradient(175deg,#2C5F8A,#7DB4C9 55%,#1B3A2C 56%,#0F2218)"></div></div>
+<div style="position:absolute;bottom:0;left:0;right:0;padding:16px 28px 28px;display:flex;justify-content:space-around;font-size:12px;color:#EAF0F6;background:linear-gradient(transparent,#000)"><span>Save</span><span>Share</span><span>Info</span><span>Hide</span></div></div></body>

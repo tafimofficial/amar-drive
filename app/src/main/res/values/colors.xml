@@ -1,0 +1,22 @@
+<resources>
+    <!-- Brand Tokens (Dark) -->
+    <color name="dark_bg">#10161E</color>
+    <color name="dark_surface">#18212C</color>
+    <color name="dark_surface_variant">#202B38</color>
+    <color name="dark_text">#EAF0F6</color>
+    <color name="dark_muted">#8A9BAE</color>
+    <color name="dark_accent">#F0AE45</color>
+    <color name="dark_on_accent">#1B1303</color>
+    <color name="dark_line">#263344</color>
+
+    <!-- Brand Tokens (Light) -->
+    <color name="light_bg">#F5F6F2</color>
+    <color name="light_surface">#FFFFFF</color>
+    <color name="light_surface_variant">#E9ECE6</color>
+    <color name="light_text">#141A21</color>
+    <color name="light_muted">#5F6B77</color>
+    <color name="light_accent">#B8710F</color>
+    <color name="light_on_accent">#FFFFFF</color>
+    <color name="light_line">#DDE1D8</color>
+</resources>
+
