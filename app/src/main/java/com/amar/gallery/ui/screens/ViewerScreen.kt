@@ -491,6 +491,32 @@ fun VideoPlayerContent(
                     override fun onRenderedFirstFrame() {
                         isFirstFrameRendered = true
                         isBuffering = false
+                        // Automatically extract crisp thumbnail if missing
+                        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                            try {
+                                if (item.thumbPath.isNullOrEmpty() || !java.io.File(item.thumbPath).exists()) {
+                                    val videoPath = item.localPath ?: tdManager.getFileLocalPath(item.fileId)
+                                    if (!videoPath.isNullOrEmpty() && java.io.File(videoPath).exists()) {
+                                        val thumbDir = java.io.File(context.filesDir, "extracted_thumbs").apply { mkdirs() }
+                                        val thumbFile = java.io.File(thumbDir, "thumb_${item.chatId}_${item.messageId}.jpg")
+                                        val retriever = android.media.MediaMetadataRetriever()
+                                        try {
+                                            retriever.setDataSource(videoPath)
+                                            val frame = retriever.getFrameAtTime(1_000_000) ?: retriever.frameAtTime
+                                            if (frame != null) {
+                                                java.io.FileOutputStream(thumbFile).use { out ->
+                                                    frame.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
+                                                }
+                                                val db = com.amar.gallery.data.db.AmarDatabase.getInstance(context)
+                                                db.updateMediaThumb(item.chatId, item.messageId, thumbFile.absolutePath)
+                                            }
+                                        } finally {
+                                            try { retriever.release() } catch (_: Exception) {}
+                                        }
+                                    }
+                                }
+                            } catch (_: Exception) {}
+                        }
                     }
                     override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                         android.util.Log.e("AmarStream", "ExoPlayer error [${error.errorCodeName}]: ${error.message}", error)
@@ -553,7 +579,11 @@ fun VideoPlayerContent(
 
         // Show Thumbnail placeholder until video's first frame is rendered
         if (!isFirstFrameRendered) {
-            val crispThumb = tdManager.getFileLocalPath(item.thumbFileId ?: -1) ?: item.thumbPath
+            val crispThumb = when {
+                !item.thumbPath.isNullOrEmpty() && File(item.thumbPath).exists() -> item.thumbPath
+                item.thumbFileId != null && !tdManager.getFileLocalPath(item.thumbFileId).isNullOrEmpty() && File(tdManager.getFileLocalPath(item.thumbFileId)!!).exists() -> tdManager.getFileLocalPath(item.thumbFileId)
+                else -> null
+            }
             if (!crispThumb.isNullOrEmpty() && File(crispThumb).exists()) {
                 AsyncImage(
                     model = File(crispThumb),

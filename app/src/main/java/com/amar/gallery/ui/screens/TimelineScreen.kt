@@ -28,6 +28,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
+import com.amar.gallery.data.model.AuthState
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.amar.gallery.data.db.AmarDatabase
@@ -316,44 +317,55 @@ fun MediaGridCell(
     val colors = LocalAppColors.current
     val context = LocalContext.current
 
-    // Trigger download of medium thumbnail if not already present
-    LaunchedEffect(item.thumbFileId) {
-        val fid = item.thumbFileId
-        if (fid != null && fid > 0) {
-            val p = tdManager.getFileLocalPath(fid)
-            if (p.isNullOrEmpty() || !File(p).exists()) {
-                tdManager.downloadFile(fid, priority = 2)
-            }
-        }
+    var liveThumbPath by remember(item.chatId, item.messageId) {
+        mutableStateOf(item.thumbPath)
+    }
+    var liveLocalPath by remember(item.chatId, item.messageId) {
+        mutableStateOf(item.localPath)
+    }
+    var liveMinithumb by remember(item.chatId, item.messageId) {
+        mutableStateOf(item.minithumb)
     }
 
-    var liveThumbPath by remember(item.thumbFileId) {
-        mutableStateOf(item.thumbFileId?.let { tdManager.getFileLocalPath(it) } ?: item.thumbPath)
+    // Precedence:
+    // 1. liveThumbPath (always an image thumbnail)
+    // 2. liveLocalPath ONLY if kind is PHOTO (for VIDEO, localPath is .mp4 which Coil cannot render as image)
+    val crispFile = when {
+        !liveThumbPath.isNullOrEmpty() && File(liveThumbPath!!).exists() -> File(liveThumbPath!!)
+        item.kind == MediaKind.PHOTO && !liveLocalPath.isNullOrEmpty() && File(liveLocalPath!!).exists() -> File(liveLocalPath!!)
+        else -> null
     }
-    var liveLocalPath by remember(item.fileId) {
-        mutableStateOf(tdManager.getFileLocalPath(item.fileId) ?: item.localPath)
+
+    // Trigger download of medium thumbnail if not already present on disk
+    LaunchedEffect(item.chatId, item.messageId) {
+        android.util.Log.e("AmarThumb", "GridCell LaunchedEffect: msg=${item.messageId} crispFile=$crispFile thumbPath=${item.thumbPath}")
+        if (crispFile == null) {
+            tdManager.requestThumbnail(
+                chatId = item.chatId,
+                messageId = item.messageId,
+                onPath = { path ->
+                    android.util.Log.e("AmarThumb", "GridCell onPath: $path for msg=${item.messageId}")
+                    liveThumbPath = path
+                },
+                onMinithumb = { mb -> if (liveMinithumb == null) liveMinithumb = mb }
+            )
+        }
     }
 
     LaunchedEffect(item.thumbFileId, item.fileId) {
         tdManager.fileEvents.collect { fileId ->
             if (fileId == item.thumbFileId) {
                 val p = tdManager.getFileLocalPath(fileId)
-                if (!p.isNullOrEmpty()) liveThumbPath = p
-            } else if (fileId == item.fileId) {
+                if (!p.isNullOrEmpty() && File(p).exists()) liveThumbPath = p
+            } else if (fileId == item.fileId && item.kind == MediaKind.PHOTO) {
                 val p = tdManager.getFileLocalPath(fileId)
-                if (!p.isNullOrEmpty()) liveLocalPath = p
+                if (!p.isNullOrEmpty() && File(p).exists()) liveLocalPath = p
             }
         }
     }
 
-    val minithumbBitmap = remember(item.minithumb) {
-        NativeEngine.decodeMinithumb(item.minithumb)
-    }
-
-    val crispFile = when {
-        !liveLocalPath.isNullOrEmpty() && File(liveLocalPath!!).exists() -> File(liveLocalPath!!)
-        !liveThumbPath.isNullOrEmpty() && File(liveThumbPath!!).exists() -> File(liveThumbPath!!)
-        else -> null
+    val minithumbBitmap = remember(liveMinithumb) {
+        NativeEngine.decodeMinithumb(liveMinithumb)
     }
 
     Box(

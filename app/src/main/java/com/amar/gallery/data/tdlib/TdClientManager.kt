@@ -64,6 +64,7 @@ class TdClientManager private constructor(private val context: Context) : Client
     private val completedFileIds = ConcurrentHashMap.newKeySet<Int>()
     private val fileProgressMap = ConcurrentHashMap<Int, FileProgress>()
     private val fileRangeTrackers = ConcurrentHashMap<Int, FileRangeTracker>()
+    private val pendingThumbCallbacks = ConcurrentHashMap<Int, java.util.concurrent.CopyOnWriteArrayList<(String) -> Unit>>()
     private val _fileEvents = MutableSharedFlow<Int>(extraBufferCapacity = 128)
     val fileEvents: SharedFlow<Int> = _fileEvents.asSharedFlow()
 
@@ -128,7 +129,13 @@ class TdClientManager private constructor(private val context: Context) : Client
             tracker.markCompleted(size)
             if (p != null) {
                 scope.launch(Dispatchers.IO) {
-                    db.updateLocalPath(file.id, p)
+                    db.updateFilePath(file.id, p)
+                }
+                val cbs = pendingThumbCallbacks.remove(file.id)
+                if (cbs != null) {
+                    for (cb in cbs) {
+                        scope.launch(Dispatchers.Main) { cb(p) }
+                    }
                 }
             }
         } else if (local.downloadedPrefixSize > 0) {
@@ -855,7 +862,10 @@ class TdClientManager private constructor(private val context: Context) : Client
                     scope.launch(Dispatchers.IO) {
                         db.updateMediaFileId(chatId, messageId, parsed.fileId, parsed.thumbFileId)
                         if (!parsed.localPath.isNullOrEmpty()) {
-                            db.updateLocalPath(parsed.fileId, parsed.localPath)
+                            db.updateFilePath(parsed.fileId, parsed.localPath)
+                        }
+                        if (!parsed.thumbPath.isNullOrEmpty()) {
+                            db.updateMediaThumb(chatId, messageId, parsed.thumbPath, parsed.thumbFileId)
                         }
                     }
                 }
@@ -868,6 +878,58 @@ class TdClientManager private constructor(private val context: Context) : Client
         return resultPair
     }
 
+    fun requestThumbnail(
+        chatId: Long,
+        messageId: Long,
+        onPath: (String) -> Unit,
+        onMinithumb: ((ByteArray) -> Unit)? = null
+    ) {
+        Log.e("AmarThumb", "requestThumbnail invoked for msg $messageId in chat $chatId")
+        val req = TdApi.GetMessage().apply {
+            this.chatId = chatId
+            this.messageId = messageId
+        }
+        send(req) { res ->
+            if (res is TdApi.Message) {
+                val parsed = parseMessage(res)
+                if (parsed == null) {
+                    Log.e("AmarThumb", "parseMessage returned null for msg $messageId")
+                    return@send
+                }
+                if (parsed.minithumb != null && onMinithumb != null) {
+                    scope.launch(Dispatchers.Main) { onMinithumb(parsed.minithumb) }
+                }
+                val thumbPath = parsed.thumbPath
+                val thumbFid = parsed.thumbFileId
+                Log.e("AmarThumb", "requestThumbnail for $messageId: kind=${parsed.kind} thumbFid=$thumbFid thumbPath=$thumbPath")
+                if (!thumbPath.isNullOrEmpty() && File(thumbPath).exists()) {
+                    Log.e("AmarThumb", "Thumbnail exists on disk: $thumbPath")
+                    scope.launch(Dispatchers.IO) {
+                        db.updateMediaThumb(chatId, messageId, thumbPath, thumbFid)
+                    }
+                    scope.launch(Dispatchers.Main) { onPath(thumbPath) }
+                } else if (thumbFid != null && thumbFid > 0) {
+                    val local = localFilePaths[thumbFid]
+                    if (!local.isNullOrEmpty() && File(local).exists()) {
+                        Log.e("AmarThumb", "Cached in localFilePaths: $local")
+                        scope.launch(Dispatchers.IO) {
+                            db.updateMediaThumb(chatId, messageId, local, thumbFid)
+                        }
+                        scope.launch(Dispatchers.Main) { onPath(local) }
+                    } else {
+                        Log.e("AmarThumb", "Downloading thumbnail fid=$thumbFid for msg $messageId")
+                        pendingThumbCallbacks.computeIfAbsent(thumbFid) { java.util.concurrent.CopyOnWriteArrayList() }.add(onPath)
+                        downloadFile(thumbFid, priority = 32)
+                    }
+                } else {
+                    Log.e("AmarThumb", "No thumbnail available in Telegram metadata for msg $messageId")
+                }
+            } else if (res is TdApi.Error) {
+                Log.e("AmarThumb", "GetMessage failed for msg $messageId: ${res.message} [${res.code}]")
+            }
+        }
+    }
+
     fun startStreamingFile(fileId: Int) {
         downloadFileOffset(fileId, offset = 0L, limit = 0L, priority = 32)
     }
@@ -875,15 +937,27 @@ class TdClientManager private constructor(private val context: Context) : Client
     fun send(function: TdApi.Function<*>, handler: (TdApi.Object) -> Unit) {
         val c = client
         if (c == null) {
-            Log.e(TAG, "send() called but client is null: ${function.javaClass.simpleName}")
-            scope.launch(Dispatchers.Main) {
-                handler(TdApi.Error(500, "Telegram Client is initializing, please wait..."))
+            Log.i(TAG, "send() called while client initializing, queuing: ${function.javaClass.simpleName}")
+            scope.launch {
+                var waitMs = 0
+                while (client == null && waitMs < 10000) {
+                    kotlinx.coroutines.delay(50)
+                    waitMs += 50
+                }
+                val ready = client
+                if (ready != null) {
+                    ready.send(function) { result ->
+                        handler(result)
+                    }
+                } else {
+                    scope.launch(Dispatchers.Main) {
+                        handler(TdApi.Error(500, "Telegram Client is initializing, please wait..."))
+                    }
+                }
             }
             return
         }
-        Log.i(TAG, "send() -> ${function.javaClass.simpleName}")
         c.send(function) { result ->
-            Log.i(TAG, "onResult for ${function.javaClass.simpleName} -> ${result.javaClass.simpleName}")
             handler(result)
         }
     }

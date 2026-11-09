@@ -179,6 +179,28 @@ class AmarDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, 
         db.beginTransaction()
         try {
             for (item in items) {
+                var existingThumb: String? = null
+                var existingLocal: String? = null
+                var existingPinned = false
+                var exists = false
+
+                val cursor = db.rawQuery(
+                    "SELECT thumb_path, local_path, pinned FROM media WHERE chat_id = ? AND message_id = ?",
+                    arrayOf(item.chatId.toString(), item.messageId.toString())
+                )
+                cursor.use {
+                    if (it.moveToFirst()) {
+                        exists = true
+                        existingThumb = it.getString(0)
+                        existingLocal = it.getString(1)
+                        existingPinned = it.getInt(2) == 1
+                    }
+                }
+
+                val finalThumb = if (!item.thumbPath.isNullOrEmpty()) item.thumbPath else existingThumb
+                val finalLocal = if (!item.localPath.isNullOrEmpty()) item.localPath else existingLocal
+                val finalPinned = item.pinned || existingPinned
+
                 val values = ContentValues().apply {
                     put("chat_id", item.chatId)
                     put("message_id", item.messageId)
@@ -195,11 +217,16 @@ class AmarDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, 
                     put("duration_sec", item.durationSec)
                     put("date", item.date)
                     put("caption", item.caption)
-                    put("pinned", if (item.pinned) 1 else 0)
-                    put("local_path", item.localPath)
-                    put("thumb_path", item.thumbPath)
+                    put("pinned", if (finalPinned) 1 else 0)
+                    put("local_path", finalLocal)
+                    put("thumb_path", finalThumb)
                 }
-                db.insertWithOnConflict("media", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+
+                if (exists) {
+                    db.update("media", values, "chat_id = ? AND message_id = ?", arrayOf(item.chatId.toString(), item.messageId.toString()))
+                } else {
+                    db.insert("media", null, values)
+                }
             }
             db.setTransactionSuccessful()
         } finally {
@@ -314,12 +341,32 @@ class AmarDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, 
         return list
     }
 
-    fun updateLocalPath(fileId: Int, path: String) {
+    fun updateFilePath(fileId: Int, path: String) {
         val db = writableDatabase
-        val values = ContentValues().apply {
+        // 1. If this fileId is a main media file, update local_path
+        val valuesLocal = ContentValues().apply {
             put("local_path", path)
         }
-        db.update("media", values, "file_id = ?", arrayOf(fileId.toString()))
+        db.update("media", valuesLocal, "file_id = ?", arrayOf(fileId.toString()))
+
+        // 2. If this fileId is a thumbnail, update thumb_path
+        val valuesThumb = ContentValues().apply {
+            put("thumb_path", path)
+        }
+        db.update("media", valuesThumb, "thumb_file_id = ?", arrayOf(fileId.toString()))
+    }
+
+    fun updateLocalPath(fileId: Int, path: String) = updateFilePath(fileId, path)
+
+    fun updateMediaThumb(chatId: Long, messageId: Long, thumbPath: String, thumbFileId: Int? = null) {
+        val db = writableDatabase
+        val values = ContentValues().apply {
+            put("thumb_path", thumbPath)
+            if (thumbFileId != null && thumbFileId > 0) {
+                put("thumb_file_id", thumbFileId)
+            }
+        }
+        db.update("media", values, "chat_id = ? AND message_id = ?", arrayOf(chatId.toString(), messageId.toString()))
     }
 
     fun updateMediaFileId(chatId: Long, messageId: Long, freshFileId: Int, freshThumbFileId: Int? = null) {
