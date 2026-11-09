@@ -27,7 +27,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.amar.gallery.data.db.AmarDatabase
 import com.amar.gallery.data.model.ChannelItem
 import com.amar.gallery.data.model.MediaItem
@@ -271,6 +273,7 @@ fun TimelineScreen(
                         items(itemsInGroup, key = { it.stableId }) { item ->
                             MediaGridCell(
                                 item = item,
+                                tdManager = tdManager,
                                 isSelectionMode = isSelectionMode,
                                 isSelected = selectedItems.contains(item.stableId),
                                 onLongClick = {
@@ -304,16 +307,53 @@ fun TimelineScreen(
 @Composable
 fun MediaGridCell(
     item: MediaItem,
+    tdManager: TdClientManager,
     isSelectionMode: Boolean,
     isSelected: Boolean,
     onLongClick: () -> Unit,
     onClick: () -> Unit
 ) {
     val colors = LocalAppColors.current
+    val context = LocalContext.current
 
-    // Decode minithumbnail directly in C with 0ms delay
+    // Trigger download of medium thumbnail if not already present
+    LaunchedEffect(item.thumbFileId) {
+        val fid = item.thumbFileId
+        if (fid != null && fid > 0) {
+            val p = tdManager.getFileLocalPath(fid)
+            if (p.isNullOrEmpty() || !File(p).exists()) {
+                tdManager.downloadFile(fid, priority = 2)
+            }
+        }
+    }
+
+    var liveThumbPath by remember(item.thumbFileId) {
+        mutableStateOf(item.thumbFileId?.let { tdManager.getFileLocalPath(it) } ?: item.thumbPath)
+    }
+    var liveLocalPath by remember(item.fileId) {
+        mutableStateOf(tdManager.getFileLocalPath(item.fileId) ?: item.localPath)
+    }
+
+    LaunchedEffect(item.thumbFileId, item.fileId) {
+        tdManager.fileEvents.collect { fileId ->
+            if (fileId == item.thumbFileId) {
+                val p = tdManager.getFileLocalPath(fileId)
+                if (!p.isNullOrEmpty()) liveThumbPath = p
+            } else if (fileId == item.fileId) {
+                val p = tdManager.getFileLocalPath(fileId)
+                if (!p.isNullOrEmpty()) liveLocalPath = p
+            }
+        }
+    }
+
     val minithumbBitmap = remember(item.minithumb) {
         NativeEngine.decodeMinithumb(item.minithumb)
+    }
+
+    val crispFile = when {
+        !liveLocalPath.isNullOrEmpty() && File(liveLocalPath!!).exists() -> File(liveLocalPath!!)
+        !liveThumbPath.isNullOrEmpty() && File(liveThumbPath!!).exists() -> File(liveThumbPath!!)
+        else -> null
     }
 
     Box(
@@ -322,17 +362,21 @@ fun MediaGridCell(
             .background(colors.surface2)
             .clickable(onClick = onClick)
     ) {
-        // 1. Minithumb or Thumbnail from file/document
-        if (minithumbBitmap != null) {
-            Image(
-                bitmap = minithumbBitmap.asImageBitmap(),
-                contentDescription = null,
+        if (crispFile != null) {
+            // High/Medium Quality Crisp Image!
+            AsyncImage(
+                model = ImageRequest.Builder(context)
+                    .data(crispFile)
+                    .crossfade(true)
+                    .build(),
+                contentDescription = item.caption ?: item.fileName,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
             )
-        } else if (!item.thumbPath.isNullOrEmpty() && File(item.thumbPath).exists()) {
-            AsyncImage(
-                model = File(item.thumbPath),
+        } else if (minithumbBitmap != null) {
+            // Temporary instant blur placeholder while medium thumbnail is loading
+            Image(
+                bitmap = minithumbBitmap.asImageBitmap(),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
@@ -349,16 +393,6 @@ fun MediaGridCell(
                     modifier = Modifier.size(32.dp)
                 )
             }
-        }
-
-        // 2. High-resolution local image or downloaded file
-        if (!item.localPath.isNullOrEmpty() && File(item.localPath).exists()) {
-            AsyncImage(
-                model = File(item.localPath),
-                contentDescription = item.caption ?: item.fileName,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
-            )
         }
 
         // 3. Video indicator & duration pill

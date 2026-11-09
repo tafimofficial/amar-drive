@@ -8,6 +8,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.TransferListener
+import com.amar.gallery.data.tdlib.FileProgress
 import com.amar.gallery.data.tdlib.TdClientManager
 import java.io.File
 import java.io.IOException
@@ -78,10 +79,9 @@ class GrowingFileDataSource(
         }
 
         val startWait = System.currentTimeMillis()
-        val timeoutMs = 25000L // 25s timeout before stopping
+        val timeoutMs = 30000L // 30s timeout
 
         while (System.currentTimeMillis() - startWait < timeoutMs) {
-            // 1. Try reading directly from disk if file is available
             val progress = tdManager.getFileProgress(fileId)
             val filePath = progress?.path ?: tdManager.getFileLocalPath(fileId) ?: currentOpenedPath
 
@@ -102,13 +102,20 @@ class GrowingFileDataSource(
                     if (raf != null) {
                         val fileLen = file.length()
                         val isComplete = progress?.isCompleted == true || tdManager.isFileCompleted(fileId)
-                        val prefix = progress?.downloadedPrefixSize ?: 0L
 
-                        // If completed or requested chunk is within downloaded contiguous prefix
-                        val available = if (isComplete) fileLen else maxOf(prefix, fileLen)
+                        // Calculate strictly downloaded contiguous bounds so we NEVER read unwritten zeros!
+                        val availableEnd: Long = when {
+                            isComplete -> fileLen
+                            progress == null -> 0L
+                            currentPosition < progress.downloadedPrefixSize -> progress.downloadedPrefixSize
+                            progress.downloadOffset > 0L && currentPosition in progress.downloadOffset until (progress.downloadOffset + progress.downloadedSize) -> {
+                                progress.downloadOffset + progress.downloadedSize
+                            }
+                            else -> 0L
+                        }
 
-                        if (available > currentPosition) {
-                            val chunk = minOf(bytesToRead.toLong(), available - currentPosition).toInt()
+                        if (availableEnd > currentPosition) {
+                            val chunk = minOf(bytesToRead.toLong(), availableEnd - currentPosition).toInt()
                             if (chunk > 0) {
                                 try {
                                     raf.seek(currentPosition)
@@ -132,23 +139,7 @@ class GrowingFileDataSource(
                 }
             }
 
-            // 2. Fallback to TDLib's ReadFilePart API for partial memory/cache chunks
-            val partLimit = minOf(bytesToRead, 65536).toLong()
-            val chunkData = tdManager.readFilePartSync(fileId, currentPosition, partLimit, timeoutMs = 300)
-            if (chunkData != null && chunkData.isNotEmpty()) {
-                val readCount = minOf(bytesToRead, chunkData.size)
-                System.arraycopy(chunkData, 0, buffer, offset, readCount)
-                currentPosition += readCount
-                if (bytesRemaining != C.LENGTH_UNSET.toLong()) {
-                    bytesRemaining -= readCount
-                }
-                currentDataSpec?.let { spec ->
-                    listeners.forEach { it.onBytesTransferred(this, spec, true, readCount) }
-                }
-                return readCount
-            }
-
-            // 3. Check if download completed and nothing more to read
+            // Check if file is completely downloaded and no more bytes to read
             if (tdManager.isFileCompleted(fileId)) {
                 val raf = randomAccessFile
                 if (raf != null && currentPosition >= raf.length()) {
@@ -156,15 +147,15 @@ class GrowingFileDataSource(
                 }
             }
 
-            // Keep TDLib download alive from current position
+            // Re-signal TDLib download if waiting more than 1.5 seconds
             val elapsed = System.currentTimeMillis() - startWait
-            if (elapsed > 1000 && elapsed % 2000 < 60) {
+            if (elapsed > 1500 && elapsed % 3000 < 60) {
                 tdManager.downloadFileOffset(fileId, offset = currentPosition, limit = 0L, priority = 32)
             }
 
             // Sleep briefly while TDLib fetches next network packet
             try {
-                Thread.sleep(35)
+                Thread.sleep(30)
             } catch (_: InterruptedException) {
                 return C.RESULT_END_OF_INPUT
             }

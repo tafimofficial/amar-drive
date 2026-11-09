@@ -428,8 +428,13 @@ fun VideoPlayerContent(
             fileId = item.fileId,
             totalSize = item.sizeBytes
         )
+        val ext = if (item.fileName?.contains(".") == true) item.fileName.substringAfterLast(".") else "mp4"
+        val mediaItem = ExoMediaItem.Builder()
+            .setUri(Uri.parse("amar-stream://video/${item.fileId}.$ext"))
+            .setMimeType(item.mime ?: "video/mp4")
+            .build()
         val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory)
-            .createMediaSource(ExoMediaItem.fromUri(Uri.parse("amar-stream://video/${item.fileId}")))
+            .createMediaSource(mediaItem)
 
         ExoPlayer.Builder(context).build().apply {
             setMediaSource(mediaSource)
@@ -503,16 +508,17 @@ fun VideoPlayerContent(
 
         // Show Thumbnail placeholder until video's first frame is rendered
         if (!isFirstFrameRendered) {
-            if (minithumbBitmap != null) {
-                Image(
-                    bitmap = minithumbBitmap.asImageBitmap(),
+            val crispThumb = tdManager.getFileLocalPath(item.thumbFileId ?: -1) ?: item.thumbPath
+            if (!crispThumb.isNullOrEmpty() && File(crispThumb).exists()) {
+                AsyncImage(
+                    model = File(crispThumb),
                     contentDescription = null,
                     contentScale = ContentScale.Fit,
                     modifier = Modifier.fillMaxSize()
                 )
-            } else if (!item.thumbPath.isNullOrEmpty() && File(item.thumbPath).exists()) {
-                AsyncImage(
-                    model = File(item.thumbPath),
+            } else if (minithumbBitmap != null) {
+                Image(
+                    bitmap = minithumbBitmap.asImageBitmap(),
                     contentDescription = null,
                     contentScale = ContentScale.Fit,
                     modifier = Modifier.fillMaxSize()

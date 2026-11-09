@@ -26,6 +26,7 @@ data class FileProgress(
     val fileId: Int,
     val path: String?,
     val isCompleted: Boolean,
+    val downloadOffset: Long,
     val downloadedPrefixSize: Long,
     val downloadedSize: Long,
     val expectedSize: Long
@@ -125,6 +126,7 @@ class TdClientManager private constructor(private val context: Context) : Client
                         fileId = file.id,
                         path = p,
                         isCompleted = local.isDownloadingCompleted,
+                        downloadOffset = local.downloadOffset,
                         downloadedPrefixSize = local.downloadedPrefixSize,
                         downloadedSize = local.downloadedSize,
                         expectedSize = file.expectedSize
@@ -534,7 +536,12 @@ class TdClientManager private constructor(private val context: Context) : Client
                 val photo = content.photo
                 val minithumb = photo.minithumbnail?.data
                 val largest = photo.sizes.maxByOrNull { it.width * it.height } ?: photo.sizes.lastOrNull() ?: return null
-                val thumb = photo.sizes.firstOrNull()
+                // Pick medium thumbnail ('m' ~320px or 'x' ~800px, avoiding the tiny blurry 's' 100px)
+                val mediumThumb = photo.sizes.find { it.type == "m" }
+                    ?: photo.sizes.find { it.type == "x" }
+                    ?: photo.sizes.firstOrNull { it.width in 200..640 }
+                    ?: photo.sizes.firstOrNull()
+                val thumb = mediumThumb
                 val localPath = largest.photo.local?.path
                 val thumbPath = thumb?.photo?.local?.path
 
@@ -546,6 +553,9 @@ class TdClientManager private constructor(private val context: Context) : Client
                 }
                 if (!thumbPath.isNullOrEmpty() && thumb != null) {
                     localFilePaths[thumb.photo.id] = thumbPath
+                }
+                if (thumb != null && thumb.photo.local?.isDownloadingCompleted == false) {
+                    downloadFile(thumb.photo.id, priority = 2)
                 }
 
                 return MediaItem(
@@ -623,6 +633,9 @@ class TdClientManager private constructor(private val context: Context) : Client
                 }
                 if (!thumbPath.isNullOrEmpty() && animThumb != null) {
                     localFilePaths[animThumb.file.id] = thumbPath
+                }
+                if (animThumb != null && animThumb.file.local?.isDownloadingCompleted == false) {
+                    downloadFile(animThumb.file.id, priority = 2)
                 }
 
                 return MediaItem(
