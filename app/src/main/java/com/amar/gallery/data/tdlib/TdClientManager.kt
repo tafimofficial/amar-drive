@@ -76,7 +76,7 @@ class TdClientManager private constructor(private val context: Context) : Client
             val path = localFilePaths[fileId]
             if (path != null) {
                 val f = File(path)
-                if (f.exists()) return f.length()
+                if (f.exists() && f.length() > 0) return maxOf(f.length(), position + 10 * 1024 * 1024L)
             }
             return Long.MAX_VALUE
         }
@@ -114,6 +114,39 @@ class TdClientManager private constructor(private val context: Context) : Client
         }
     }
 
+    fun handleFileUpdate(file: TdApi.File) {
+        val local = file.local ?: return
+        val p = if (!local.path.isNullOrEmpty()) local.path else null
+        if (p != null) {
+            localFilePaths[file.id] = p
+        }
+        val tracker = fileRangeTrackers.computeIfAbsent(file.id) { FileRangeTracker() }
+        val actualSize = if (file.size > 0) file.size else file.expectedSize
+        if (local.isDownloadingCompleted) {
+            completedFileIds.add(file.id)
+            val size = if (actualSize > 0) actualSize else (local.downloadOffset + local.downloadedPrefixSize)
+            tracker.markCompleted(size)
+            if (p != null) {
+                scope.launch(Dispatchers.IO) {
+                    db.updateLocalPath(file.id, p)
+                }
+            }
+        } else if (local.downloadedPrefixSize > 0) {
+            tracker.addRange(local.downloadOffset, local.downloadOffset + local.downloadedPrefixSize)
+        }
+        fileProgressMap[file.id] = FileProgress(
+            fileId = file.id,
+            path = p,
+            isCompleted = local.isDownloadingCompleted,
+            downloadOffset = local.downloadOffset,
+            downloadedPrefixSize = local.downloadedPrefixSize,
+            downloadedSize = local.downloadedSize,
+            expectedSize = actualSize
+        )
+        Log.i("AmarStream", "handleFileUpdate: id=${file.id} path='$p' completed=${local.isDownloadingCompleted} offset=${local.downloadOffset} prefix=${local.downloadedPrefixSize} dlSize=${local.downloadedSize} actualSize=$actualSize")
+        _fileEvents.tryEmit(file.id)
+    }
+
     override fun onResult(obj: TdApi.Object?) {
         if (obj == null) return
         when (obj.constructor) {
@@ -127,37 +160,7 @@ class TdClientManager private constructor(private val context: Context) : Client
             }
             TdApi.UpdateFile.CONSTRUCTOR -> {
                 val update = obj as TdApi.UpdateFile
-                val file = update.file
-                val local = file.local
-                if (local != null) {
-                    val p = if (!local.path.isNullOrEmpty()) local.path else null
-                    if (p != null) {
-                        localFilePaths[file.id] = p
-                    }
-                    val tracker = fileRangeTrackers.computeIfAbsent(file.id) { FileRangeTracker() }
-                    if (local.isDownloadingCompleted) {
-                        completedFileIds.add(file.id)
-                        val size = if (file.expectedSize > 0) file.expectedSize else (local.downloadOffset + local.downloadedPrefixSize)
-                        tracker.markCompleted(size)
-                        if (p != null) {
-                            scope.launch(Dispatchers.IO) {
-                                db.updateLocalPath(file.id, p)
-                            }
-                        }
-                    } else if (local.downloadedPrefixSize > 0) {
-                        tracker.addRange(local.downloadOffset, local.downloadOffset + local.downloadedPrefixSize)
-                    }
-                    fileProgressMap[file.id] = FileProgress(
-                        fileId = file.id,
-                        path = p,
-                        isCompleted = local.isDownloadingCompleted,
-                        downloadOffset = local.downloadOffset,
-                        downloadedPrefixSize = local.downloadedPrefixSize,
-                        downloadedSize = local.downloadedSize,
-                        expectedSize = file.expectedSize
-                    )
-                    _fileEvents.tryEmit(file.id)
-                }
+                handleFileUpdate(update.file)
             }
             TdApi.UpdateUser.CONSTRUCTOR -> {
                 val update = obj as TdApi.UpdateUser
@@ -802,7 +805,19 @@ class TdClientManager private constructor(private val context: Context) : Client
             this.limit = limit
             this.synchronous = false
         }
-        send(func) {}
+        send(func) { res ->
+            if (res is TdApi.File) {
+                handleFileUpdate(res)
+            }
+        }
+    }
+
+    fun requestFile(fileId: Int) {
+        send(TdApi.GetFile().apply { this.fileId = fileId }) { res ->
+            if (res is TdApi.File) {
+                handleFileUpdate(res)
+            }
+        }
     }
 
     fun readFilePartSync(fileId: Int, offset: Long, count: Long, timeoutMs: Long = 500): ByteArray? {
@@ -823,6 +838,34 @@ class TdClientManager private constructor(private val context: Context) : Client
             latch.await(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
         } catch (_: InterruptedException) {}
         return resultData
+    }
+
+    fun getFreshMediaInfoSync(chatId: Long, messageId: Long, timeoutMs: Long = 2000): Pair<Int, String?>? {
+        val latch = java.util.concurrent.CountDownLatch(1)
+        var resultPair: Pair<Int, String?>? = null
+        val req = TdApi.GetMessage().apply {
+            this.chatId = chatId
+            this.messageId = messageId
+        }
+        send(req) { res ->
+            if (res is TdApi.Message) {
+                val parsed = parseMessage(res)
+                if (parsed != null) {
+                    resultPair = Pair(parsed.fileId, parsed.localPath)
+                    scope.launch(Dispatchers.IO) {
+                        db.updateMediaFileId(chatId, messageId, parsed.fileId, parsed.thumbFileId)
+                        if (!parsed.localPath.isNullOrEmpty()) {
+                            db.updateLocalPath(parsed.fileId, parsed.localPath)
+                        }
+                    }
+                }
+            }
+            latch.countDown()
+        }
+        try {
+            latch.await(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+        } catch (_: InterruptedException) {}
+        return resultPair
     }
 
     fun startStreamingFile(fileId: Int) {

@@ -8,9 +8,9 @@ class FileRangeTracker {
     @Synchronized
     fun markCompleted(size: Long) {
         isCompleted = true
-        totalFileSize = size
+        totalFileSize = if (size > 0) size else Long.MAX_VALUE
         ranges.clear()
-        ranges.add(0L until size.coerceAtLeast(1L))
+        ranges.add(0L until totalFileSize)
     }
 
     @Synchronized
@@ -41,7 +41,7 @@ class FileRangeTracker {
 
     @Synchronized
     fun getAvailableEnd(position: Long): Long {
-        if (isCompleted) return totalFileSize
+        if (isCompleted) return if (totalFileSize > 0) totalFileSize else Long.MAX_VALUE
         for (r in ranges) {
             val rStart = r.first
             val rEnd = r.last + 1
@@ -68,3 +68,4 @@ class FileRangeTracker {
 
     fun isCompleted(): Boolean = isCompleted
 }
+

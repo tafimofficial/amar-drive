@@ -418,6 +418,7 @@ fun VideoPlayerContent(
     var showControls by remember { mutableStateOf(true) }
     var isBuffering by remember { mutableStateOf(true) }
     var isFirstFrameRendered by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     val minithumbBitmap = remember(item.minithumb) {
         NativeEngine.decodeMinithumb(item.minithumb)
@@ -430,15 +431,29 @@ fun VideoPlayerContent(
 
     // Initialize ExoPlayer with true progressive streaming immediately
     val player = remember(item.fileId) {
+        val inferredMime = when {
+            !item.mime.isNullOrEmpty() && item.mime.startsWith("video/") -> item.mime
+            item.fileName?.endsWith(".mkv", ignoreCase = true) == true -> "video/x-matroska"
+            item.fileName?.endsWith(".webm", ignoreCase = true) == true -> "video/webm"
+            item.fileName?.endsWith(".ts", ignoreCase = true) == true -> "video/mp2t"
+            item.fileName?.endsWith(".avi", ignoreCase = true) == true -> "video/x-msvideo"
+            item.fileName?.endsWith(".flv", ignoreCase = true) == true -> "video/x-flv"
+            else -> "video/mp4"
+        }
+        val ext = if (item.fileName?.contains(".") == true) item.fileName.substringAfterLast(".") else "mp4"
+
         val dataSourceFactory = GrowingFileDataSource.Factory(
             tdManager = tdManager,
             fileId = item.fileId,
-            totalSize = item.sizeBytes
+            totalSize = item.sizeBytes,
+            mimeType = inferredMime,
+            chatId = item.chatId,
+            messageId = item.messageId
         )
-        val ext = if (item.fileName?.contains(".") == true) item.fileName.substringAfterLast(".") else "mp4"
+        val mediaUri = Uri.parse("amar-stream://video/${item.fileId}.$ext?type=${Uri.encode(inferredMime)}")
         val mediaItem = ExoMediaItem.Builder()
-            .setUri(Uri.parse("amar-stream://video/${item.fileId}.$ext"))
-            .setMimeType(item.mime ?: "video/mp4")
+            .setUri(mediaUri)
+            .setMimeType(inferredMime)
             .build()
 
         val extractorsFactory = DefaultExtractorsFactory()
@@ -476,6 +491,13 @@ fun VideoPlayerContent(
                     override fun onRenderedFirstFrame() {
                         isFirstFrameRendered = true
                         isBuffering = false
+                    }
+                    override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                        android.util.Log.e("AmarStream", "ExoPlayer error [${error.errorCodeName}]: ${error.message}", error)
+                        scope.launch {
+                            kotlinx.coroutines.delay(1000)
+                            prepare()
+                        }
                     }
                 })
             }

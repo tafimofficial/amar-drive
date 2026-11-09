@@ -322,6 +322,17 @@ class AmarDatabase(context: Context) : SQLiteOpenHelper(context, DB_NAME, null, 
         db.update("media", values, "file_id = ?", arrayOf(fileId.toString()))
     }
 
+    fun updateMediaFileId(chatId: Long, messageId: Long, freshFileId: Int, freshThumbFileId: Int? = null) {
+        val db = writableDatabase
+        val values = ContentValues().apply {
+            put("file_id", freshFileId)
+            if (freshThumbFileId != null && freshThumbFileId > 0) {
+                put("thumb_file_id", freshThumbFileId)
+            }
+        }
+        db.update("media", values, "chat_id = ? AND message_id = ?", arrayOf(chatId.toString(), messageId.toString()))
+    }
+
     fun togglePin(chatId: Long, messageId: Long): Boolean {
         val db = writableDatabase
         val cursor = db.rawQuery("SELECT pinned FROM media WHERE chat_id = ? AND message_id = ?", arrayOf(chatId.toString(), messageId.toString()))

@@ -61,7 +61,7 @@ fun TimelineScreen(
     // Reload channels and media
     fun refreshData() {
         channels = db.getChannels()
-        mediaList = db.getTimelineMedia(selectedChannelId, selectedFilter, limit = 5000)
+        mediaList = db.getTimelineMedia(selectedChannelId, selectedFilter, limit = 1000)
     }
 
     LaunchedEffect(selectedChannelId, selectedFilter) {
