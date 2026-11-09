@@ -3,8 +3,11 @@
 -keepclassmembers class org.drinkless.tdlib.** { *; }
 -dontwarn org.drinkless.tdlib.**
 
--keep class com.amar.gallery.util.NativeEngine { *; }
--keepclassmembers class com.amar.gallery.util.NativeEngine { *; }
+-keep class com.amar.gallery.util.** { *; }
+-keepclassmembers class com.amar.gallery.util.** { *; }
+
+-keep class com.amar.gallery.data.tdlib.** { *; }
+-keepclassmembers class com.amar.gallery.data.tdlib.** { *; }
 
 -keep class com.amar.gallery.data.model.** { *; }
 -keepclassmembers class com.amar.gallery.data.model.** { *; }

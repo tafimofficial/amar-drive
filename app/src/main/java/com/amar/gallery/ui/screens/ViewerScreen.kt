@@ -42,9 +42,11 @@ import androidx.media3.common.MediaItem as ExoMediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
@@ -421,6 +423,11 @@ fun VideoPlayerContent(
         NativeEngine.decodeMinithumb(item.minithumb)
     }
 
+    // Immediately prefetch stream chunk
+    LaunchedEffect(item.fileId) {
+        tdManager.downloadFileOffset(item.fileId, offset = 0L, limit = 0L, priority = 32)
+    }
+
     // Initialize ExoPlayer with true progressive streaming immediately
     val player = remember(item.fileId) {
         val dataSourceFactory = GrowingFileDataSource.Factory(
@@ -433,29 +440,45 @@ fun VideoPlayerContent(
             .setUri(Uri.parse("amar-stream://video/${item.fileId}.$ext"))
             .setMimeType(item.mime ?: "video/mp4")
             .build()
-        val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory)
+
+        val extractorsFactory = DefaultExtractorsFactory()
+            .setConstantBitrateSeekingEnabled(true)
+
+        val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory, extractorsFactory)
             .createMediaSource(mediaItem)
 
-        ExoPlayer.Builder(context).build().apply {
-            setMediaSource(mediaSource)
-            prepare()
-            playWhenReady = isCurrentPage
-            addListener(object : Player.Listener {
-                override fun onPlaybackStateChanged(state: Int) {
-                    isBuffering = (state == Player.STATE_BUFFERING)
-                    if (state == Player.STATE_READY) {
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                /* minBufferMs = */ 10_000,
+                /* maxBufferMs = */ 30_000,
+                /* bufferForPlaybackMs = */ 500, // Starts playing in 500ms
+                /* bufferForPlaybackAfterRebufferMs = */ 1_000
+            )
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
+
+        ExoPlayer.Builder(context)
+            .setLoadControl(loadControl)
+            .build().apply {
+                setMediaSource(mediaSource)
+                prepare()
+                playWhenReady = isCurrentPage
+                addListener(object : Player.Listener {
+                    override fun onPlaybackStateChanged(state: Int) {
+                        isBuffering = (state == Player.STATE_BUFFERING)
+                        if (state == Player.STATE_READY) {
+                            isBuffering = false
+                        }
+                    }
+                    override fun onIsPlayingChanged(playing: Boolean) {
+                        isPlaying = playing
+                    }
+                    override fun onRenderedFirstFrame() {
+                        isFirstFrameRendered = true
                         isBuffering = false
                     }
-                }
-                override fun onIsPlayingChanged(playing: Boolean) {
-                    isPlaying = playing
-                }
-                override fun onRenderedFirstFrame() {
-                    isFirstFrameRendered = true
-                    isBuffering = false
-                }
-            })
-        }
+                })
+            }
     }
 
     // Update playback progress periodically

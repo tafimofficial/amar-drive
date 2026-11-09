@@ -63,12 +63,32 @@ class TdClientManager private constructor(private val context: Context) : Client
     private val localFilePaths = ConcurrentHashMap<Int, String>()
     private val completedFileIds = ConcurrentHashMap.newKeySet<Int>()
     private val fileProgressMap = ConcurrentHashMap<Int, FileProgress>()
+    private val fileRangeTrackers = ConcurrentHashMap<Int, FileRangeTracker>()
     private val _fileEvents = MutableSharedFlow<Int>(extraBufferCapacity = 128)
     val fileEvents: SharedFlow<Int> = _fileEvents.asSharedFlow()
 
     fun getFileLocalPath(fileId: Int): String? = localFilePaths[fileId]
     fun isFileCompleted(fileId: Int): Boolean = completedFileIds.contains(fileId)
     fun getFileProgress(fileId: Int): FileProgress? = fileProgressMap[fileId]
+
+    fun getAvailableEnd(fileId: Int, position: Long): Long {
+        if (completedFileIds.contains(fileId)) {
+            val path = localFilePaths[fileId]
+            if (path != null) {
+                val f = File(path)
+                if (f.exists()) return f.length()
+            }
+            return Long.MAX_VALUE
+        }
+        val tracker = fileRangeTrackers[fileId] ?: return 0L
+        return tracker.getAvailableEnd(position)
+    }
+
+    fun markFileCompleted(fileId: Int, size: Long = 0L) {
+        completedFileIds.add(fileId)
+        val tracker = fileRangeTrackers.computeIfAbsent(fileId) { FileRangeTracker() }
+        tracker.markCompleted(size)
+    }
 
     private var myUserId: Long = 0L
     private var pendingPhone: String = ""
@@ -114,13 +134,18 @@ class TdClientManager private constructor(private val context: Context) : Client
                     if (p != null) {
                         localFilePaths[file.id] = p
                     }
+                    val tracker = fileRangeTrackers.computeIfAbsent(file.id) { FileRangeTracker() }
                     if (local.isDownloadingCompleted) {
                         completedFileIds.add(file.id)
+                        val size = if (file.expectedSize > 0) file.expectedSize else (local.downloadOffset + local.downloadedPrefixSize)
+                        tracker.markCompleted(size)
                         if (p != null) {
                             scope.launch(Dispatchers.IO) {
                                 db.updateLocalPath(file.id, p)
                             }
                         }
+                    } else if (local.downloadedPrefixSize > 0) {
+                        tracker.addRange(local.downloadOffset, local.downloadOffset + local.downloadedPrefixSize)
                     }
                     fileProgressMap[file.id] = FileProgress(
                         fileId = file.id,
@@ -588,7 +613,10 @@ class TdClientManager private constructor(private val context: Context) : Client
                 if (!localPath.isNullOrEmpty()) {
                     localFilePaths[vid.video.id] = localPath
                     if (vid.video.local?.isDownloadingCompleted == true) {
-                        completedFileIds.add(vid.video.id)
+                        markFileCompleted(vid.video.id, vid.video.size)
+                    } else if (vid.video.local != null && vid.video.local!!.downloadedPrefixSize > 0) {
+                        val tr = fileRangeTrackers.computeIfAbsent(vid.video.id) { FileRangeTracker() }
+                        tr.addRange(vid.video.local!!.downloadOffset, vid.video.local!!.downloadOffset + vid.video.local!!.downloadedPrefixSize)
                     }
                 }
                 if (!thumbPath.isNullOrEmpty() && vidThumb != null) {
@@ -628,7 +656,10 @@ class TdClientManager private constructor(private val context: Context) : Client
                 if (!localPath.isNullOrEmpty()) {
                     localFilePaths[anim.animation.id] = localPath
                     if (anim.animation.local?.isDownloadingCompleted == true) {
-                        completedFileIds.add(anim.animation.id)
+                        markFileCompleted(anim.animation.id, anim.animation.size)
+                    } else if (anim.animation.local != null && anim.animation.local!!.downloadedPrefixSize > 0) {
+                        val tr = fileRangeTrackers.computeIfAbsent(anim.animation.id) { FileRangeTracker() }
+                        tr.addRange(anim.animation.local!!.downloadOffset, anim.animation.local!!.downloadOffset + anim.animation.local!!.downloadedPrefixSize)
                     }
                 }
                 if (!thumbPath.isNullOrEmpty() && animThumb != null) {
@@ -697,7 +728,10 @@ class TdClientManager private constructor(private val context: Context) : Client
                 if (!localPath.isNullOrEmpty()) {
                     localFilePaths[doc.document.id] = localPath
                     if (doc.document.local?.isDownloadingCompleted == true) {
-                        completedFileIds.add(doc.document.id)
+                        markFileCompleted(doc.document.id, doc.document.size)
+                    } else if (doc.document.local != null && doc.document.local!!.downloadedPrefixSize > 0) {
+                        val tr = fileRangeTrackers.computeIfAbsent(doc.document.id) { FileRangeTracker() }
+                        tr.addRange(doc.document.local!!.downloadOffset, doc.document.local!!.downloadOffset + doc.document.local!!.downloadedPrefixSize)
                     }
                 }
                 if (!thumbPath.isNullOrEmpty() && docThumb != null) {
